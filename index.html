@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Web Mewah: Rekam Suara & Ambil Foto</title>
+<style>
+  body {
+    margin:0; background:#121212; color:#0ff;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display:flex; flex-direction: column; align-items:center; justify-content:center; height:100vh;
+    overflow:hidden;
+  }
+  h1 { margin-bottom: 1rem; }
+  video, canvas {
+    border-radius: 12px;
+    box-shadow: 0 0 20px #0ff88a88;
+    max-width: 90vw;
+    max-height: 50vh;
+    background: #222;
+  }
+  button {
+    margin: 0.5rem; padding: 0.8rem 1.5rem;
+    border: none; border-radius: 8px;
+    background: #0ff; color: #121212; font-weight: bold;
+    cursor: pointer;
+    transition: background 0.3s ease;
+  }
+  button:hover:not(:disabled) {
+    background: #0cc;
+  }
+  button:disabled {
+    background: #044;
+    cursor: not-allowed;
+  }
+  #waveform {
+    width: 90vw; height: 100px; margin-top: 1rem;
+    background: #000;
+    border-radius: 12px;
+    box-shadow: 0 0 15px #0ff;
+  }
+  #photo {
+    margin-top: 1rem;
+    display: none;
+  }
+  #errorMsg {
+    margin-top: 1rem;
+    color: #f55;
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+
+<h1>Web Mewah: Rekam Suara & Ambil Foto</h1>
+
+<video id="video" autoplay playsinline></video>
+<canvas id="photo"></canvas>
+
+<div>
+  <button id="startRec">Mulai Rekam Suara</button>
+  <button id="stopRec" disabled>Hentikan Rekam</button>
+  <button id="playRec" disabled>Putar Rekaman</button>
+  <button id="takePhoto">Ambil Foto</button>
+</div>
+
+<canvas id="waveform"></canvas>
+
+<div id="errorMsg"></div>
+
+<script>
+  const video = document.getElementById('video');
+  const photo = document.getElementById('photo');
+  const startRecBtn = document.getElementById('startRec');
+  const stopRecBtn = document.getElementById('stopRec');
+  const playRecBtn = document.getElementById('playRec');
+  const takePhotoBtn = document.getElementById('takePhoto');
+  const waveform = document.getElementById('waveform');
+  const waveCtx = waveform.getContext('2d');
+  const errorMsg = document.getElementById('errorMsg');
+
+  let mediaRecorder, audioChunks = [], audioBlob, audioUrl, audio;
+  let audioContext, analyser, dataArray, source;
+
+  // Cek dukungan getUserMedia
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    errorMsg.textContent = "Browser Anda tidak mendukung fitur kamera dan mikrofon.";
+    startRecBtn.disabled = true;
+    takePhotoBtn.disabled = true;
+  } else {
+    // Minta akses kamera dan mikrofon
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true })
+      .then(stream => {
+        video.srcObject = stream;
+
+        // Setup AudioContext untuk visualisasi suara
+        audioContext = new AudioContext();
+        analyser = audioContext.createAnalyser();
+        source = audioContext.createMediaStreamSource(stream);
+        source.connect(analyser);
+        analyser.fftSize = 256;
+        const bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+
+        drawWaveform();
+
+        // Setup MediaRecorder untuk rekam audio
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+        mediaRecorder.onstop = () => {
+          audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+          audioUrl = URL.createObjectURL(audioBlob);
+          audio = new Audio(audioUrl);
+          playRecBtn.disabled = false;
+          audioChunks = [];
+        };
+      })
+      .catch(err => {
+        errorMsg.textContent = "Gagal mengakses kamera/mikrofon: " + err.message;
+        startRecBtn.disabled = true;
+        takePhotoBtn.disabled = true;
+      });
+  }
+
+  // Visualisasi gelombang suara
+  function drawWaveform() {
+    requestAnimationFrame(drawWaveform);
+    if (!analyser) return;
+    analyser.getByteTimeDomainData(dataArray);
+    waveCtx.fillStyle = '#000';
+    waveCtx.fillRect(0, 0, waveform.width, waveform.height);
+    waveCtx.lineWidth = 2;
+    waveCtx.strokeStyle = '#0ff';
+    waveCtx.beginPath();
+
+    let sliceWidth = waveform.width * 1.0 / dataArray.length;
+    let x = 0;
+
+    for(let i = 0; i < dataArray.length; i++) {
+      let v = dataArray[i] / 128.0;
+      let y = v * waveform.height/2;
+      if(i === 0) waveCtx.moveTo(x, y);
+      else waveCtx.lineTo(x, y);
+      x += sliceWidth;
+    }
+    waveCtx.lineTo(waveform.width, waveform.height/2);
+    waveCtx.stroke();
+  }
+
+  // Tombol rekam suara
+  startRecBtn.onclick = () => {
+    if (mediaRecorder && mediaRecorder.state === "inactive") {
+      mediaRecorder.start();
+      startRecBtn.disabled = true;
+      stopRecBtn.disabled = false;
+      playRecBtn.disabled = true;
+      errorMsg.textContent = "";
+    }
+  };
+  stopRecBtn.onclick = () => {
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+      mediaRecorder.stop();
+      startRecBtn.disabled = false;
+      stopRecBtn.disabled = true;
+    }
+  };
+  playRecBtn.onclick = () => {
+    if (audio) audio.play();
+  };
+
+  // Tombol ambil foto
+  takePhotoBtn.onclick = () => {
+    if (!video.srcObject) {
+      errorMsg.textContent = "Video belum tersedia.";
+      return;
+    }
+    photo.width = video.videoWidth;
+    photo.height = video.videoHeight;
+    const ctx = photo.getContext('2d');
+    // Efek filter sederhana agar foto lebih keren
+    ctx.filter = 'contrast(1.2) brightness(1.1)';
+    ctx.drawImage(video, 0, 0);
+    photo.style.display = 'block';
+    errorMsg.textContent = "";
+  };
+</script>
+
+</body>
+</html>
